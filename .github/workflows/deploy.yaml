@@ -40,5 +40,6 @@ jobs:
           ansible-playbook -i hosts_enc.yaml playbook.yaml --vault-password-file vault_pass.txt
 
       - name: Clean up vault file
+        if: always()
         run: rm -f vault_pass.txt
 
