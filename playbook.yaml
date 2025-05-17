@@ -45,4 +45,4 @@
       community.docker.docker_compose_v2:
         project_src: "{{ alloy_dest }}"
         state: present
-      become: yes
+      become: true
