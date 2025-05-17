@@ -1,0 +1,6 @@
+### Ansible ###
+.ansible
+*.retry
+secrets.yaml
+.env
+hosts.yaml
