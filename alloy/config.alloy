@@ -1,0 +1,161 @@
+// This block relabels metrics coming from node_exporter to add standard labels
+discovery.relabel "integrations_node_exporter" {
+  targets = prometheus.exporter.unix.integrations_node_exporter.targets
+
+  rule {
+    // Set the instance label to the hostname of the machine
+    target_label = "instance"
+    replacement  = sys.env("HOST_HOSTNAME")
+  }
+
+  rule {
+    // Set a standard job name for all node_exporter metrics
+    target_label = "job"
+    replacement = "integrations/node_exporter"
+  }
+}
+
+// Configure the node_exporter integration to collect system metrics
+prometheus.exporter.unix "integrations_node_exporter" {
+  // Disable unnecessary collectors to reduce overhead
+  disable_collectors = ["ipvs", "btrfs", "infiniband", "xfs", "zfs"]
+  enable_collectors = ["meminfo"]
+
+  filesystem {
+    // Exclude filesystem types that aren't relevant for monitoring
+    fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|tmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$"
+    // Exclude mount points that aren't relevant for monitoring
+    mount_points_exclude = "^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+)($|/)"
+    // Timeout for filesystem operations
+    mount_timeout        = "5s"
+  }
+
+  netclass {
+    // Ignore virtual and container network interfaces
+    ignored_devices = "^(veth.*|cali.*|[a-f0-9]{15})$"
+  }
+
+  netdev {
+    // Exclude virtual and container network interfaces from device metrics
+    device_exclude = "^(veth.*|cali.*|[a-f0-9]{15})$"
+  }
+
+
+}
+
+// Define how to scrape metrics from the node_exporter
+prometheus.scrape "integrations_node_exporter" {
+  scrape_interval = "15s"
+  // Use the targets with labels from the discovery.relabel component
+  targets    = discovery.relabel.integrations_node_exporter.output
+  // Send the scraped metrics to the relabeling component
+  forward_to = [prometheus.remote_write.nap_grafanacloud.receiver]
+}
+
+// Docker meteric
+// This block relabels metrics coming from cadvisor to add standard labels
+discovery.relabel "cadvisor_docker" {
+  targets = prometheus.exporter.cadvisor.cadvisor_docker.targets
+  //targets = discovery.docker.cadvisor_docker.targets
+
+  rule {
+    // Set the instance label to the hostname of the machine
+    target_label = "instance"
+    replacement  = sys.env("HOST_HOSTNAME")
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex = "/(.*)"
+    target_label = "container"
+  }
+
+  rule {
+    // Set a standard job name for all cadvisor metrics
+    target_label = "job"
+    replacement = "integrations/cadvisor"
+  }
+}
+
+// Host Cadvisor on the Docker socket to expose container metrics.
+prometheus.exporter.cadvisor "cadvisor_docker" {
+  docker_host = "unix:///var/run/docker.sock"
+
+  storage_duration = "5m"
+}
+
+
+// Configure a prometheus.scrape component to collect cadvisor metrics.
+prometheus.scrape "cadvisor_docker" {
+  // Use relabeled targets
+  targets    = discovery.relabel.cadvisor_docker.output
+  forward_to = [prometheus.remote_write.nap_grafanacloud.receiver]
+  scrape_interval = "5m"
+}
+
+// Docker LOKI
+// Discover running Docker containers for log collection
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  refresh_interval = "1m"
+}
+
+
+discovery.relabel "container_logs" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container_name"
+  }
+
+  rule {
+    // Set the instance label to the hostname of the machine
+    target_label = "instance"
+    replacement  = sys.env("HOST_HOSTNAME")
+  }
+
+  rule {
+    // Set a standard job name for all docker logs
+    target_label = "job"
+    replacement = "logs/docker"
+  }
+}
+
+// Collect logs and relabel to match cAdvisor's `container` label
+loki.source.docker "container_logs" {
+  host = "unix:///var/run/docker.sock"
+  targets    = discovery.docker.containers.targets
+  relabel_rules = discovery.relabel.container_logs.rules
+  forward_to = [loki.write.nap_grafanacloud.receiver]
+}
+
+// Define where to send the metrics for storage
+prometheus.remote_write "nap_grafanacloud" {
+  endpoint {
+    url = "https://prometheus-prod-49-prod-ap-northeast-0.grafana.net/api/prom/push"
+
+    basic_auth {
+      username = "2442781"
+      password = sys.env("GFCOULD_API_KEY")
+    }
+  }
+}
+
+loki.write "nap_grafanacloud" {
+  endpoint {
+    url = "https://logs-prod-030.grafana.net/loki/api/v1/push"
+
+    basic_auth {
+      username = "1217067"
+      password = sys.env("GFCOULD_API_KEY")
+    }
+  }
+}
+
+
+// Enable live debugging features (empty config means use defaults)
+livedebugging {
+  enabled = true
+}

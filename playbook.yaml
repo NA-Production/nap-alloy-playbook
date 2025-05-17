@@ -1,0 +1,48 @@
+---
+- name: Deploy alloy folder and start Docker Compose
+  hosts: all
+  become: true
+  vars:
+    alloy_src: ./alloy
+    alloy_dest: /home/{{ ansible_user | default('root') }}/alloy
+
+  vars_files:
+    - secrets.yaml
+
+  tasks:
+    - name: Copy alloy folder to remote server
+      ansible.builtin.copy:
+        src: "{{ alloy_src }}/"
+        dest: "{{ alloy_dest }}/"
+        owner: "{{ ansible_user | default('root') }}"
+        group: "{{ ansible_user | default('root') }}"
+        mode: "0755"
+
+    - name: Deploy site-specific .env file
+      ansible.builtin.template:
+        src: alloy.env.j2
+        dest: "{{ alloy_dest }}/.env"
+        owner: "{{ ansible_user | default('root') }}"
+        group: "{{ ansible_user | default('root') }}"
+        mode: "0644"
+
+    - name: Check if Docker is installed
+      ansible.builtin.stat:
+        path: /usr/bin/docker
+      register: docker_stat
+
+    - name: Fail if Docker is not installed
+      ansible.builtin.fail:
+        msg: "Docker is not installed. Please install Docker before running this playbook."
+      when: not docker_stat.stat.exists
+
+    - name: Ensure docker-compose is installed
+      ansible.builtin.apt:
+        name: docker-compose-plugin
+        state: present
+
+    - name: Run docker compose up
+      community.docker.docker_compose_v2:
+        project_src: "{{ alloy_dest }}"
+        state: present
+      become: yes
